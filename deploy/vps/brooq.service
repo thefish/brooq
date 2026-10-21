@@ -1,0 +1,29 @@
+[Unit]
+Description=Brooq (очередь заданий: воркер + служебная поверхность на 127.0.0.1)
+# Юнит стартует после своей зависимости; сам БД не мигрирует —
+# миграции идут отдельным шагом деплоя (ADR-0002).
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+ExecStart=/opt/brooq/bin/brooq
+WorkingDirectory=/opt/brooq
+EnvironmentFile=/opt/brooq/.env
+Restart=on-failure
+RestartSec=5
+# Остановка ограничена: движок ждёт завершения текущих попыток без
+# собственного срока, а обработчик, игнорирующий ctx, может висеть.
+# После этого срока systemd пришлёт SIGKILL — лучше, чем вечное
+# «deactivating» при рестарте/деплое. Потолок равен потолку попытки
+# плюс грация на запись исхода.
+TimeoutStopSec=90
+KillSignal=SIGTERM
+# Ужесточение юнита (ADR-0006):
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

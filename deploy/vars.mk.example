@@ -1,0 +1,16 @@
+# deploy/vars.mk — параметры подключения для make deploy (ADR-0006).
+# Значения по умолчанию; переопределяются через окружение.
+# Пример: VPS_HOST=other.example.com make deploy
+
+# VPS: один хост, один юнит.
+VPS_HOST ?= yoursite.com
+VPS_USER ?= user
+VPS_DIR  ?= /opt/brooq
+# Список systemd-юнитов: новый бинарник = строка здесь и unit-файл
+# в deploy/vps/.
+VPS_UNITS = brooq
+
+# tools versions (bin-deps сверяет версию, а не наличие в PATH)
+GOLANGCI_LINT_VERSION ?= v2.14.0
+GOOSE_VERSION ?= v3.27.3
+GOVULNCHECK_VERSION ?= v1.8.0

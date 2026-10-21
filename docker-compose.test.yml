@@ -1,0 +1,27 @@
+# Тестовая PostgreSQL для интеграционных тестов.
+# Единственный источник схемы — каталог migrations/ (ADR-0002): TestMain
+# пакетов repository/service сами создают изолированные схемы и применяют
+# goose. Расширения уровня БД (pgcrypto) накатывает initdb-скрипт
+# (scripts/testdb-init/) — как devops на проде: ДО любых миграций,
+# поэтому в самих миграциях их нет.
+#
+# Поднять:  make test-db-up
+# Прогнать: TEST_DATABASE_URL=postgres://brooq:brooq@localhost:55433/brooq_test?sslmode=disable make test
+services:
+  test-db:
+    image: postgres:17-alpine
+    container_name: brooq-test-db
+    environment:
+      POSTGRES_USER: brooq
+      POSTGRES_PASSWORD: brooq
+      POSTGRES_DB: brooq_test
+    ports:
+      # 55433 снаружи — локальный PostgreSQL может занимать 5432.
+      - "55433:5432"
+    volumes:
+      - ./scripts/testdb-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brooq -d brooq_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15

@@ -1,0 +1,40 @@
+# Локальное окружение с секретами
+.env
+
+# Параметры деплоя: шаблон версионируется, рабочий файл — нет
+deploy/vars.mk
+.env-new
+.env.*.local
+
+# Бинари и временные артефакты
+bin/*
+.bin/*
+coverage.out
+cover.out.tmp
+*.test
+
+# Логи
+*.log
+
+# Сторонние зависимости, вендоризованные вручную (управляются `go mod vendor`)
+vendor/
+
+# Инструменты навигации/графа
+graphify-out/
+tmp/
+
+# Рабочие материалы (выгрузки, PDF-поиск) не версионируются
+docs/*.pdf
+docs/*Search*.md
+
+# Инструменты разработки и рабочие материалы — не публикуются
+.pi/
+.agents/
+_bmad/
+_bmad-output/
+skills-lock.json
+.graphifyignore
+AGENTS.md
+SYSTEM.md
+CONTEXT.md
+openspec/
