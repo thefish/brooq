@@ -775,7 +775,8 @@ WHERE state IN ('done', 'dead', 'canceled')
 
 ### Метрики
 
-`/metrics` отдаёт десять метрик движка (плюс HTTP-метрики поверхности):
+`/metrics` отдаёт одиннадцать метрик движка (плюс HTTP-метрики
+поверхности):
 
 | Метрика | Тип | Что показывает |
 |---|---|---|
@@ -814,6 +815,117 @@ increase(brooq_hung_workers_total[15m]) > 0
 # Все слоты заняты — очередь не разгружается воркерами.
 brooq_worker_busy == on(topic) brooq_jobs{state="processing"}
 ```
+
+### Grafana: подключение с нуля
+
+Метрики отдаёт сама библиотека — отдельного экспортёра нет. Наружу
+поверхность не выставляется (ADR-0009): `/metrics` слушает loopback
+(`HTTP_ADDR`, по умолчанию `127.0.0.1:8090`), поэтому сборщик должен
+стоять на том же хосте или ходить через туннель.
+
+**1. Сбор.** Prometheus на том же VPS:
+
+```yaml
+# /etc/prometheus/prometheus.yml
+scrape_configs:
+  - job_name: brooq
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['127.0.0.1:8090']
+```
+
+Если Prometheus живёт отдельно — туннель вместо публикации порта:
+
+```sh
+# постоянно, как systemd-юнит на стороне Prometheus
+ssh -N -L 127.0.0.1:8090:127.0.0.1:8090 thefish@zaar.be
+```
+
+Проверка до Grafana — метрики видны и с правильными типами:
+
+```sh
+curl -s 127.0.0.1:8090/metrics | grep '^# TYPE brooq_'
+```
+
+**2. Источник данных.** Grafana → Connections → Data sources → Prometheus
+→ URL `http://127.0.0.1:9090` (или адрес своего Prometheus) → Save & test.
+Если Prometheus не на этом же хосте с Grafana — нужен `http://<host>:9090`.
+
+**3. Панели.** Пять запросов закрывают эксплуатацию. Вставляются в панель
+как PromQL, `topic` — переменная дашборда (`label_values(brooq_jobs, topic)`).
+
+```promql
+# SLO: сколько ждёт старейшее готовое задание (главный график)
+max by (topic) (brooq_ready_oldest_age_seconds)
+
+# Глубина очереди по состояниям: растёт pending — не хватает воркеров
+sum by (topic, state) (brooq_jobs)
+
+# Темп исходов: сколько заданий закрывается в секунду и чем именно
+sum by (topic, outcome) (rate(brooq_settle_total[5m]))
+
+# Средняя длительность попытки (гистограмм нет, считаем из пары sum/count)
+  sum by (topic) (rate(brooq_attempt_duration_seconds_sum[5m]))
+/ sum by (topic) (rate(brooq_attempt_duration_seconds_count[5m]))
+
+# Занятость пула: сколько слотов работает прямо сейчас
+sum by (topic) (brooq_worker_busy)
+```
+
+`rate()` по счётчикам требует минимум двух скрейпов — на дашборде это
+означает «первые 30 секунд после старта Prometheus графики пустые».
+Это нормально, а не дефект.
+
+**4. Алерты.** Правила — в Prometheus, не в Grafana: тогда они работают
+без открытого браузера.
+
+```yaml
+# /etc/prometheus/rules/brooq.yml
+groups:
+  - name: brooq
+    rules:
+      - alert: BrooqQueueStalled
+        expr: max by (topic) (brooq_ready_oldest_age_seconds) > 300
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Очередь {{ $labels.topic }} стоит: старейшее задание ждёт {{ $value | humanizeDuration }}"
+
+      - alert: BrooqJobsDying
+        expr: sum by (topic) (rate(brooq_settle_total{outcome="dead"}[10m])) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Тема {{ $labels.topic }}: задания умирают (dead)"
+
+      - alert: BrooqHungHandlers
+        expr: increase(brooq_hung_workers_total[15m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Тема {{ $labels.topic }}: обработчик не вышел после отмены"
+
+      - alert: BrooqLeasesLost
+        expr: increase(brooq_lease_lost_total[15m]) > 0
+        labels: { severity: info }
+        annotations:
+          summary: "Тема {{ $labels.topic }}: аренда потеряна, возможен повторный запуск"
+
+      - alert: BrooqTargetDown
+        expr: up{job="brooq"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "brooq не отдаёт /metrics"
+```
+
+`BrooqLeasesLost` — уровень `info`, а не `critical`: потеря аренды
+штатна (так работает «хотя бы один раз», ADR-0010), и тревожить по ней
+стоит только при росте.
+
+**Чего в дашборде нет.** Гистограмм и квантилей: реестр не хранит
+корзин, а пара `_sum`/`_count` даёт среднее и темп — для SLO этого
+хватает. Если нужны p95/p99 — это отдельное решение (корзины в реестре
+или экспорт в prometheus-client у потребителя), а не настройка.
 
 ---
 

@@ -36,7 +36,16 @@ GOLANGCI_LINT ?= golangci-lint
 GOVULNCHECK ?= govulncheck
 GOVULNCHECK_OPTS ?= -show color
 
-.PHONY: help bin-deps migrate-up migrate-down migrate-status test lint go-check build spec-validate deploy deploy-units deploy-migrate deploy-restart run test-db-up test-db-down
+# Сайт документации: brooq.zaar.be. Каталог на VPS — отдельно от VPS_DIR:
+# там лежит только статика, юнита и миграций нет.
+SITE_HOST ?= $(VPS_HOST)
+SITE_USER ?= $(VPS_USER)
+SITE_DIR  ?= projects/$(PROJECT_NAME).zaar.be/www
+SITE_OUT  := tmp/site
+SITE_PY   := python3
+SITE_PAGES := index.html ru.html
+
+.PHONY: help bin-deps migrate-up migrate-down migrate-status test lint go-check build spec-validate deploy deploy-units deploy-migrate deploy-restart run test-db-up test-db-down site site-deploy
 
 ## help: показать список доступных команд
 help:
@@ -120,6 +129,20 @@ test-db-up:
 
 test-db-down:
 	docker compose -f docker-compose.test.yml down
+
+## site: собрать сайт документации в tmp/site (index.html — английский, ru.html — русский)
+# Источник — сами документы репозитория и их переводы в docs/en;
+# собирает scripts/site/build.py, pandoc должен быть в PATH.
+site:
+	@$(SITE_PY) scripts/site/build.py --out $(SITE_OUT)
+
+## site-deploy: собрать сайт и выложить на VPS (rsync → SITE_DIR, ADR-0006)
+site-deploy: site
+	@set -e; \
+	 echo "=== Deploy site $(PROJECT_NAME).zaar.be ==="; \
+	 rsync -avz --checksum $(addprefix $(SITE_OUT)/,$(SITE_PAGES)) \
+	   $(SITE_USER)@$(SITE_HOST):$(SITE_DIR)/; \
+	 echo "=== Site OK: https://$(PROJECT_NAME).zaar.be ==="
 
 ## deploy-units: скопировать systemd-юниты на VPS (sudo) и перечитать systemd.
 # Вызывается deploy'ем после rsync-копий; первичная настройка — тот же путь.
