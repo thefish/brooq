@@ -64,14 +64,33 @@ _ = engine.RegisterKind(queue.Topic("email"), handler{}, queue.KindOptions{
 engine.Start()
 defer engine.Close()
 
-// Задание — в том числе в своей транзакции:
+// Постановка через пул: id и признак «строка создана этим вызовом».
 id, created, err := engine.Enqueue(ctx, queue.Job{Topic: "email", Payload: payload, IdempotencyKey: "order-42"})
 if err != nil {
 	log.Error("постановка задания", "err", err)
 }
 // created == false — задание с таким ключом уже было, id — его идентификатор.
 log.Info("задание поставлено", "id", id, "created", created)
+
+// Постановка в своей транзакции: своя запись и задание фиксируются вместе.
+tx, err := pool.Begin(ctx)                       // pgx.Tx потребителя
+defer func() { _ = tx.Rollback(ctx) }()
+if _, _, err := store.EnqueueTx(ctx, postgres.WrapTx(tx), queue.Job{
+	Topic: "email", Payload: payload, IdempotencyKey: "order-42",
+}); err != nil {
+	log.Error("постановка задания", "err", err)
+}
+// ... свои записи тем же tx ...
+_ = tx.Commit(ctx)
+
+// Обратное направление: транзакция очереди → свой код.
+qtx, err := engine.Begin(ctx)                    // queue.Tx
+pgxTx, ok := postgres.AsPgx(qtx)                 // false, если это не *postgres.Tx
 ```
+
+`postgres.WrapTx` заворачивает транзакцию потребителя в порт `queue.Tx`,
+`postgres.AsPgx` делает обратное — отдаёт транзакцию драйвера из порта.
+Обе стороны — одна и та же транзакция, а не копия.
 
 Подробное руководство с примерами — `docs/queue-engine.md`.
 
@@ -85,25 +104,24 @@ log.Info("задание поставлено", "id", id, "created", created)
 
 ## Состояние
 
-Движок работает целиком: постановка, взятие, запись исхода, повтор с
-backoff, `Reaper`, heartbeat, отмена в полёте, watchdog и девять метрик
-`brooq_*`.
+Движок работает целиком: постановка (с идентификатором задания и
+признаком `created`), взятие, запись исхода, повтор с backoff,
+`Reaper`, heartbeat, отмена в полёте, watchdog и девять метрик
+`brooq_*`. Постановка идёт и через пул, и в транзакции потребителя —
+в обе стороны (`postgres.WrapTx` / `postgres.AsPgx`).
 
 Чего пока нет:
 
 - **HTTP-API очереди** — отмена есть (`Queue.Cancel`), эндпоинта нет;
-- **приоритеты** — порядок строго FIFO по `available_at, id`;
+- **приоритетов** — порядок строго FIFO по `available_at, id`;
 - **партиционирования** — при очень больших объёмах понадобится
   разбиение по времени вместо удаления строками.
 
 Терминальные задания (`done`, `dead`, `canceled`) удаляются по TTL —
 по умолчанию через 30 дней (`QUEUE_RETENTION_TTL`), пачками, с
-настроенным под это autovacuum.
-
-- **ретенция терминальных строк**: ключ идемпотентности не
-  освобождается, таблица растёт;
-- **HTTP-API очереди** — отмена есть (`Queue.Cancel`), эндпоинта нет;
-- **приоритеты** — порядок строго FIFO по `available_at, id`.
+настроенным под это autovacuum. Ключ идемпотентности живёт, пока жива
+строка: TTL задаёт окно, после которого повтор с тем же ключом создаст
+новое задание.
 
 Устройство пакетов и правила импортов — `docs/architecture.md`:
 
