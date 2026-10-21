@@ -862,7 +862,8 @@ func TestEnqueueTxRollbackLeavesNoJob(t *testing.T) {
 
 		tx, err := repo.Begin(ctx)
 		require.NoError(t, err, "транзакция производителя")
-		require.NoError(t, repo.EnqueueTx(ctx, tx, job))
+		_, _, err = repo.EnqueueTx(ctx, tx, job)
+		require.NoError(t, err)
 
 		// Внутри транзакции задание видно: иначе проверять откат было бы
 		// нечего.
@@ -880,7 +881,8 @@ func TestEnqueueTxRollbackLeavesNoJob(t *testing.T) {
 
 		tx, err := repo.Begin(ctx)
 		require.NoError(t, err, "транзакция производителя")
-		require.NoError(t, repo.EnqueueTx(ctx, tx, job))
+		_, _, err = repo.EnqueueTx(ctx, tx, job)
+		require.NoError(t, err)
 		require.NoError(t, tx.Commit(ctx))
 
 		require.Equal(t, 1, countJobs(t), "после фиксации задание в очереди")
@@ -1146,10 +1148,11 @@ func TestEnqueueIdempotency(t *testing.T) {
 			topic: "t-enqueue-nokey",
 			enqueue: func(t *testing.T, topic queue.Topic) {
 				for i := 0; i < 2; i++ {
-					require.NoError(t, repo.Enqueue(ctx, queue.Job{
+					_, _, err := repo.Enqueue(ctx, queue.Job{
 						Topic:   topic,
 						Payload: queue.Payload(`{"письмо":1}`),
-					}), "постановка без ключа %d", i+1)
+					})
+					require.NoError(t, err, "постановка без ключа %d", i+1)
 				}
 			},
 			wantRows:    2,
@@ -1160,11 +1163,12 @@ func TestEnqueueIdempotency(t *testing.T) {
 			topic: "t-enqueue-empty-key",
 			enqueue: func(t *testing.T, topic queue.Topic) {
 				for i := 0; i < 2; i++ {
-					require.NoError(t, repo.Enqueue(ctx, queue.Job{
+					_, _, err := repo.Enqueue(ctx, queue.Job{
 						Topic:          topic,
 						Payload:        queue.Payload(`{"письмо":1}`),
 						IdempotencyKey: "",
-					}), "постановка с пустым ключом %d", i+1)
+					})
+					require.NoError(t, err, "постановка с пустым ключом %d", i+1)
 				}
 			},
 			wantRows:    2,
@@ -1175,11 +1179,12 @@ func TestEnqueueIdempotency(t *testing.T) {
 			topic: "t-enqueue-spaces-key",
 			enqueue: func(t *testing.T, topic queue.Topic) {
 				for i := 0; i < 2; i++ {
-					require.NoError(t, repo.Enqueue(ctx, queue.Job{
+					_, _, err := repo.Enqueue(ctx, queue.Job{
 						Topic:          topic,
 						Payload:        queue.Payload(`{"письмо":1}`),
 						IdempotencyKey: "   ",
-					}), "постановка с ключом из пробелов %d", i+1)
+					})
+					require.NoError(t, err, "постановка с ключом из пробелов %d", i+1)
 				}
 			},
 			wantRows: 1,
@@ -1194,13 +1199,15 @@ func TestEnqueueIdempotency(t *testing.T) {
 					Payload:        queue.Payload(`{"письмо":1}`),
 					IdempotencyKey: "k-tx",
 				}
-				require.NoError(t, repo.Enqueue(ctx, job), "первая постановка через пул")
+				_, _, err := repo.Enqueue(ctx, job)
+				require.NoError(t, err, "первая постановка через пул")
 
 				tx, err := repo.Begin(ctx)
 				require.NoError(t, err, "транзакция производителя")
 				defer func() { _ = tx.Rollback(ctx) }()
 
-				require.NoError(t, repo.EnqueueTx(ctx, tx, job),
+				_, _, err = repo.EnqueueTx(ctx, tx, job)
+				require.NoError(t, err,
 					"повтор с тем же ключом в транзакции — не ошибка")
 				require.NoError(t, tx.Commit(ctx))
 			},

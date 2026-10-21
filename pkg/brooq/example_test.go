@@ -92,10 +92,11 @@ func TestLibraryUsage(t *testing.T) {
 	// Close останавливает воркеров и дожидается их выхода (Stop внутри).
 	defer func() { _ = engine.Close() }()
 
-	require.NoError(t, engine.Enqueue(ctx, queue.Job{
+	_, _, err := engine.Enqueue(ctx, queue.Job{
 		Topic:   topic,
 		Payload: queue.Payload(`{"order":"42"}`),
-	}), "постановка задания через фасад")
+	})
+	require.NoError(t, err, "постановка задания через фасад")
 
 	waitLibState(t, ctx, pool, topic, queue.StateDone)
 

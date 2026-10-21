@@ -113,7 +113,10 @@ func (q *Queue) runAttempt(ctx context.Context, c queue.Claim, k kind) {
 			// дополнительно.
 			return nil
 		}
-		return q.repo.EnqueueTx(ctx, tx, *next)
+		if _, _, err := q.repo.EnqueueTx(ctx, tx, *next); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	// Занятость пула (D11): слот занят с начала попытки до записи

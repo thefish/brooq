@@ -42,7 +42,8 @@ func TestQueueEnqueue(t *testing.T) {
 		topic := e2eTopic(t, "facade-enqueue")
 		payload := queue.Payload(`{"order":"7"}`)
 
-		require.NoError(t, q.Enqueue(ctx, queue.Job{Topic: topic, Payload: payload}))
+		_, _, err := q.Enqueue(ctx, queue.Job{Topic: topic, Payload: payload})
+		require.NoError(t, err)
 
 		var (
 			state      string
@@ -67,8 +68,10 @@ func TestQueueEnqueue(t *testing.T) {
 		topic := e2eTopic(t, "facade-enqueue-key")
 		job := queue.Job{Topic: topic, Payload: queue.Payload(`{"n":1}`), IdempotencyKey: "k-facade"}
 
-		require.NoError(t, q.Enqueue(ctx, job))
-		require.NoError(t, q.Enqueue(ctx, job), "повтор постановки — не ошибка")
+		_, _, err := q.Enqueue(ctx, job)
+		require.NoError(t, err)
+		_, _, err = q.Enqueue(ctx, job)
+		require.NoError(t, err, "повтор постановки — не ошибка")
 
 		var n int
 		require.NoError(t, pool.QueryRow(ctx,
@@ -109,10 +112,11 @@ func TestQueueEnqueueTx(t *testing.T) {
 
 			tx, err := q.Begin(ctx)
 			require.NoError(t, err, "транзакция производителя")
-			require.NoError(t, q.EnqueueTx(ctx, tx, queue.Job{
+			_, _, err = q.EnqueueTx(ctx, tx, queue.Job{
 				Topic:   topic,
 				Payload: queue.Payload(`{"n":1}`),
-			}), "постановка в транзакции производителя")
+			})
+			require.NoError(t, err, "постановка в транзакции производителя")
 
 			// Внутри транзакции задание видно: иначе «после отката пусто»
 			// доказывало бы и то, что EnqueueTx не пишет ничего вовсе.

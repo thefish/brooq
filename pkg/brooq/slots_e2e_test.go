@@ -93,14 +93,16 @@ func TestSlotsLockedByDistinct(t *testing.T) {
 	})
 	defer func() { _ = engine.Close() }()
 
-	require.NoError(t, repo.Enqueue(ctx, queue.Job{
+	_, _, err := repo.Enqueue(ctx, queue.Job{
 		Topic:   topic,
 		Payload: queue.Payload(`{"n":1}`),
-	}), "постановка первого задания")
-	require.NoError(t, repo.Enqueue(ctx, queue.Job{
+	})
+	require.NoError(t, err, "постановка первого задания")
+	_, _, err = repo.Enqueue(ctx, queue.Job{
 		Topic:   topic,
 		Payload: queue.Payload(`{"n":2}`),
-	}), "постановка второго задания")
+	})
+	require.NoError(t, err, "постановка второго задания")
 
 	engine.Start()
 

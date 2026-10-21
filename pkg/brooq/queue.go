@@ -62,10 +62,13 @@ type Repo interface {
 	DeleteTerminal(ctx context.Context, tx queue.Tx, ttl time.Duration, batch int) ([]queue.DeletedJob, error)
 	// Begin открывает транзакцию записи.
 	Begin(ctx context.Context) (queue.Tx, error)
-	// Enqueue ставит задание через пул.
-	Enqueue(ctx context.Context, job queue.Job) error
-	// EnqueueTx ставит задание в транзакции вызывающего.
-	EnqueueTx(ctx context.Context, tx queue.Tx, job queue.Job) error
+	// Enqueue ставит задание через пул. Возвращает идентификатор задания
+	// и признак того, что строка создана этим вызовом.
+	Enqueue(ctx context.Context, job queue.Job) (id string, created bool, err error)
+	// EnqueueTx ставит задание в транзакции вызывающего. Возвращает
+	// идентификатор задания и признак того, что строка создана этим
+	// вызовом.
+	EnqueueTx(ctx context.Context, tx queue.Tx, job queue.Job) (id string, created bool, err error)
 	// CountByState — чтение для метрик (D11): число заданий по каждой
 	// паре «тема + состояние». Идёт через пул, а не через транзакцию;
 	// пустая таблица — пустой результат без ошибки.
@@ -331,14 +334,23 @@ func (q *Queue) Stop() {
 // Enqueue ставит задание в очередь через пул соединений. Это фасад над
 // хранилищем: потребителю не нужно трогать SQL-слой (D9). Задание
 // получает состояние pending и становится доступно воркерам.
-func (q *Queue) Enqueue(ctx context.Context, job queue.Job) error {
+//
+// Возвращает идентификатор задания и признак created: created == false
+// означает, что задание с той же парой «тема + ключ идемпотентности»
+// уже было, а id принадлежит ему.
+func (q *Queue) Enqueue(ctx context.Context, job queue.Job) (id string, created bool, err error) {
 	return q.repo.Enqueue(ctx, job)
 }
 
 // EnqueueTx ставит задание в транзакции вызывающего: задание и его
 // бизнес-изменения фиксируются вместе — либо всё, либо ничего.
 // Транзакцию открывает потребитель (см. Begin) и сам же коммитит.
-func (q *Queue) EnqueueTx(ctx context.Context, tx queue.Tx, job queue.Job) error {
+//
+// Идентификатор задания известен до фиксации транзакции производителя и
+// действителен только после её успешного Commit. created == false
+// означает, что задание с той же парой «тема + ключ идемпотентности»
+// уже было, а id принадлежит ему.
+func (q *Queue) EnqueueTx(ctx context.Context, tx queue.Tx, job queue.Job) (id string, created bool, err error) {
 	return q.repo.EnqueueTx(ctx, tx, job)
 }
 

@@ -65,7 +65,12 @@ engine.Start()
 defer engine.Close()
 
 // Задание — в том числе в своей транзакции:
-err := engine.Enqueue(ctx, queue.Job{Topic: "email", Payload: payload, IdempotencyKey: "order-42"})
+id, created, err := engine.Enqueue(ctx, queue.Job{Topic: "email", Payload: payload, IdempotencyKey: "order-42"})
+if err != nil {
+	log.Error("постановка задания", "err", err)
+}
+// created == false — задание с таким ключом уже было, id — его идентификатор.
+log.Info("задание поставлено", "id", id, "created", created)
 ```
 
 Подробное руководство с примерами — `docs/queue-engine.md`.

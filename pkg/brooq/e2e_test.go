@@ -409,10 +409,11 @@ func TestE2EClaimRace(t *testing.T) {
 	repo := postgres.New(pool)
 	topic := e2eTopic(t, "e2e-race")
 
-	require.NoError(t, repo.Enqueue(ctx, queue.Job{
+	_, _, err := repo.Enqueue(ctx, queue.Job{
 		Topic:   topic,
 		Payload: queue.Payload(`{"n":1}`),
-	}), "постановка единственного задания")
+	})
+	require.NoError(t, err, "постановка единственного задания")
 
 	first, second := &countingHandler{}, &countingHandler{}
 	q1 := newEngine(t, repo, "e2e-race-1", topic, first)
@@ -467,21 +468,23 @@ func TestE2EHappyPath(t *testing.T) {
 	// Производитель: задание фиксируется вместе с его транзакцией.
 	tx, err := repo.Begin(ctx)
 	require.NoError(t, err, "транзакция производителя")
-	require.NoError(t, repo.EnqueueTx(ctx, tx, queue.Job{
+	_, _, err = repo.EnqueueTx(ctx, tx, queue.Job{
 		Topic:          topic,
 		Payload:        payload,
 		IdempotencyKey: key,
-	}), "постановка в транзакции производителя")
+	})
+	require.NoError(t, err, "постановка в транзакции производителя")
 	require.NoError(t, tx.Commit(ctx), "фиксация транзакции производителя")
 
 	// Повтор постановки с тем же ключом: не ошибка и не второе задание.
 	tx, err = repo.Begin(ctx)
 	require.NoError(t, err, "транзакция повторной постановки")
-	require.NoError(t, repo.EnqueueTx(ctx, tx, queue.Job{
+	_, _, err = repo.EnqueueTx(ctx, tx, queue.Job{
 		Topic:          topic,
 		Payload:        payload,
 		IdempotencyKey: key,
-	}), "повтор постановки с тем же ключом не ошибка")
+	})
+	require.NoError(t, err, "повтор постановки с тем же ключом не ошибка")
 	require.NoError(t, tx.Commit(ctx))
 
 	handler := &countingHandler{}
@@ -566,10 +569,11 @@ func TestCancelInFlight(t *testing.T) {
 	})
 	defer func() { _ = engine.Close() }()
 
-	require.NoError(t, repo.Enqueue(ctx, queue.Job{
+	_, _, err := repo.Enqueue(ctx, queue.Job{
 		Topic:   topic,
 		Payload: queue.Payload(`{"long":true}`),
-	}), "постановка долгого задания")
+	})
+	require.NoError(t, err, "постановка долгого задания")
 	engine.Start()
 
 	var claim queue.Claim
@@ -661,10 +665,11 @@ func TestHeartbeatKeepsLease(t *testing.T) {
 	})
 	defer func() { _ = engine.Close() }()
 
-	require.NoError(t, repo.Enqueue(ctx, queue.Job{
+	_, _, err := repo.Enqueue(ctx, queue.Job{
 		Topic:   topic,
 		Payload: queue.Payload(`{"long":true}`),
-	}), "постановка долгого задания")
+	})
+	require.NoError(t, err, "постановка долгого задания")
 	engine.Start()
 
 	var claim queue.Claim

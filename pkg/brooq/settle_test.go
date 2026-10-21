@@ -111,6 +111,12 @@ type fakeRepo struct {
 	enqueued []queue.Job
 }
 
+// enqueueID — идентификатор, который фейк возвращает из Enqueue.
+const enqueueID = "00000000-0000-0000-0000-00000000000a"
+
+// enqueueTxID — идентификатор, который фейк возвращает из EnqueueTx.
+const enqueueTxID = "00000000-0000-0000-0000-000000000001"
+
 // newFakeRepo возвращает фейковое хранилище с одним взятым заданием:
 // строка в processing, попытка уже списана (D5).
 func newFakeRepo() *fakeRepo {
@@ -249,7 +255,10 @@ func (r *fakeRepo) Begin(_ context.Context) (queue.Tx, error) {
 }
 
 // Enqueue в фейке ничего не делает: постановку проверяют e2e-тесты.
-func (r *fakeRepo) Enqueue(_ context.Context, _ queue.Job) error { return nil }
+// Возвращает фиксированный идентификатор и признак «строка создана».
+func (r *fakeRepo) Enqueue(_ context.Context, _ queue.Job) (string, bool, error) {
+	return enqueueID, true, nil
+}
 
 // ReapExpired в фейке ничего не возвращает: возврат истёкших аренд
 // проверяет сценарий сборщика (задача 4.5).
@@ -266,10 +275,10 @@ func (r *fakeRepo) DeleteTerminal(_ context.Context, _ queue.Tx, _ time.Duration
 // EnqueueTx ставит задание в транзакции вызывающего: задание становится
 // видно в очереди только при её фиксации, а ошибка постановки откатывает
 // всю транзакцию (D9).
-func (r *fakeRepo) EnqueueTx(_ context.Context, tx queue.Tx, job queue.Job) error {
+func (r *fakeRepo) EnqueueTx(_ context.Context, tx queue.Tx, job queue.Job) (string, bool, error) {
 	ft, ok := tx.(*fakeTx)
 	if !ok {
-		return fmt.Errorf("фейк: ожидалась своя транзакция, получено %T", tx)
+		return "", false, fmt.Errorf("фейк: ожидалась своя транзакция, получено %T", tx)
 	}
 
 	r.mu.Lock()
@@ -278,10 +287,10 @@ func (r *fakeRepo) EnqueueTx(_ context.Context, tx queue.Tx, job queue.Job) erro
 	r.enqueueTxJobs = append(r.enqueueTxJobs, job)
 	r.enqueueTxBeforeCommit = append(r.enqueueTxBeforeCommit, !ft.committed)
 	if r.enqueueTxErr != nil {
-		return r.enqueueTxErr
+		return "", false, r.enqueueTxErr
 	}
 	ft.enqueued = append(ft.enqueued, job)
-	return nil
+	return enqueueTxID, true, nil
 }
 
 // enqueueTxSnapshot — снимок постановок следующего задания: число

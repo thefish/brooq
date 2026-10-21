@@ -115,13 +115,18 @@ defer engine.Close()
 
 ```go
 // Задание ставится через фасад — SQL-адаптер трогать не нужно.
-err := engine.Enqueue(ctx, queue.Job{
+// id известен сразу, created == false — задание с таким ключом уже было.
+id, created, err := engine.Enqueue(ctx, queue.Job{
 	Topic:   queue.Topic("notification"),
 	Payload: []byte(`{"user_id":"u-42","text":"привет"}`),
 	// Ключ идемпотентности необязателен: с ним повторная постановка
 	// не создаст второе задание.
 	IdempotencyKey: "notify-u-42-2026-10-20",
 })
+if err != nil {
+	return err
+}
+log.Info("задание поставлено", "id", id, "created", created)
 ```
 
 Воркер заберёт задание и запишет исход в ту же строку; `attempts`
@@ -183,8 +188,8 @@ func New(repo Repo, log *slog.Logger, cfg Config) *Queue
 func (q *Queue) RegisterKind(topic queue.Topic, h queue.Handler, opts queue.KindOptions) error
 
 // Постановка — не нужно трогать SQL-адаптер напрямую.
-func (q *Queue) Enqueue(ctx context.Context, job queue.Job) error
-func (q *Queue) EnqueueTx(ctx context.Context, tx queue.Tx, job queue.Job) error
+func (q *Queue) Enqueue(ctx context.Context, job queue.Job) (id string, created bool, err error)
+func (q *Queue) EnqueueTx(ctx context.Context, tx queue.Tx, job queue.Job) (id string, created bool, err error)
 func (q *Queue) Begin(ctx context.Context) (queue.Tx, error)
 
 // Административная отмена (D9, D14).
@@ -371,10 +376,14 @@ func (h handler) Handle(ctx context.Context, job queue.Claim) error {
 ### Обычная постановка
 
 ```go
-err := repo.Enqueue(ctx, queue.Job{
+id, created, err := repo.Enqueue(ctx, queue.Job{
 	Topic:   queue.Topic("notification"),
 	Payload: payload,
 })
+if err != nil {
+	return err
+}
+log.Info("задание поставлено", "id", id, "created", created)
 ```
 
 ### В транзакции производителя (главный смысл «библиотеки»)
@@ -394,15 +403,26 @@ if _, err := tx.Exec(ctx, `UPDATE account SET notified = true WHERE id = $1`, id
 }
 
 // 2. Кладём задание в той же транзакции.
-if err := repo.EnqueueTx(ctx, tx, queue.Job{
+// Идентификатор известен до фиксации, но действителен только после Commit.
+jobID, created, err := repo.EnqueueTx(ctx, tx, queue.Job{
 	Topic:          queue.Topic("notification"),
 	Payload:        payload,
 	IdempotencyKey: "welcome-" + id,
-}); err != nil {
+})
+if err != nil {
 	return err
 }
 
-// 3. Фиксируем: либо оба изменения видны, либо ни одного.
+// 3. Мету пишем всегда и идемпотентно по job_id: created == false может
+// относиться к уже завершённому заданию — тогда мета просто дописывается.
+if _, err := tx.Exec(ctx,
+	`INSERT INTO outbox (order_id, job_id) VALUES ($1, $2) ON CONFLICT (job_id) DO NOTHING`,
+	id, jobID); err != nil {
+	return err
+}
+log.Info("задание поставлено в транзакции", "id", jobID, "created", created)
+
+// 4. Фиксируем: либо оба изменения видны, либо ни одного.
 return tx.Commit(ctx)
 ```
 
@@ -413,10 +433,27 @@ return tx.Commit(ctx)
 
 ```go
 // Повтор с тем же ключом → второго задания нет (ON CONFLICT DO NOTHING).
-repo.Enqueue(ctx, queue.Job{Topic: "notification", Payload: p, IdempotencyKey: "order-42-paid"})
-repo.Enqueue(ctx, queue.Job{Topic: "notification", Payload: p, IdempotencyKey: "order-42-paid"})
-// В таблице одна строка.
+id, created, err := repo.Enqueue(ctx, queue.Job{Topic: "notification", Payload: p, IdempotencyKey: "order-42-paid"})
+// В таблице одна строка; первый вызов: created == true, id — новая строка.
+id2, created2, err := repo.Enqueue(ctx, queue.Job{Topic: "notification", Payload: p, IdempotencyKey: "order-42-paid"})
+// Второй вызов: тот же id (id2 == id) и created2 == false — задания не появилось.
 ```
+
+Признак `created` отвечает на вопрос «новая ли строка», а не «новый ли
+эффект»: `created == false` может относиться к уже завершённому заданию
+(производитель поставил задание и упал до записи меты, воркер довёл его
+до `done`, производитель повторил попытку). Поэтому мету потребителя
+пишут **всегда**, делая её идемпотентной по `job_id`, — в той же
+транзакции, что и `EnqueueTx`:
+
+```sql
+INSERT INTO outbox (order_id, job_id) VALUES ($1, $2)
+ON CONFLICT (job_id) DO NOTHING
+```
+
+Тогда повтор при `created == false` дописывает недостающую мету и не
+дублирует существующую. Обратный порядок («сначала мета, потом
+постановка») не годится: `id` ещё неизвестен.
 
 Правила:
 

@@ -108,10 +108,11 @@ func TestWatchdogHungWorkerStopsRenewalAndReaped(t *testing.T) {
 		work = 6 * lease
 	)
 
-	require.NoError(t, repo.Enqueue(ctx, queue.Job{
+	_, _, err := repo.Enqueue(ctx, queue.Job{
 		Topic:   topic,
 		Payload: queue.Payload(`{"hung":true}`),
-	}), "постановка задания, которое зависнет")
+	})
+	require.NoError(t, err, "постановка задания, которое зависнет")
 
 	m := newFakeMetrics()
 	hung := newHungHandler(work)

@@ -176,10 +176,11 @@ func TestMetricsEngineCounters(t *testing.T) {
 	topic := e2eTopic(t, "metrics-counters")
 
 	for i := range jobs {
-		require.NoError(t, repo.Enqueue(ctx, queue.Job{
+		_, _, err := repo.Enqueue(ctx, queue.Job{
 			Topic:   topic,
 			Payload: queue.Payload(fmt.Sprintf(`{"n":%d}`, i+1)),
-		}), "постановка задания %d", i+1)
+		})
+		require.NoError(t, err, "постановка задания %d", i+1)
 	}
 
 	m := newFakeMetrics()
@@ -252,11 +253,12 @@ func TestMetricsReadyOldestAge(t *testing.T) {
 	// available_at в прошлом: возраст считается от available_at, а не от
 	// постановки, поэтому «старейшее готовое» сразу старше секунды —
 	// значение заведомо отличимо от нуля и от «поля не публиковалось».
-	require.NoError(t, repo.Enqueue(ctx, queue.Job{
+	_, _, err := repo.Enqueue(ctx, queue.Job{
 		Topic:       topic,
 		Payload:     queue.Payload(`{"waiting":true}`),
 		AvailableAt: time.Now().Add(-2 * time.Second),
-	}), "постановка ждущего задания")
+	})
+	require.NoError(t, err, "постановка ждущего задания")
 
 	m := newFakeMetrics()
 	// Темы нет в kinds: воркеров у неё нет, задание ждёт в pending. Тикер
@@ -306,10 +308,11 @@ func TestMetricsCancelInFlight(t *testing.T) {
 	})
 	defer func() { _ = engine.Close() }()
 
-	require.NoError(t, repo.Enqueue(ctx, queue.Job{
+	_, _, err := repo.Enqueue(ctx, queue.Job{
 		Topic:   topic,
 		Payload: queue.Payload(`{"long":true}`),
-	}), "постановка долгого задания")
+	})
+	require.NoError(t, err, "постановка долгого задания")
 	engine.Start()
 
 	claim := <-handler.started
@@ -360,10 +363,11 @@ func TestMetricsGaugeDrainsToZero(t *testing.T) {
 		topic := e2eTopic(t, "metrics-zero-jobs")
 
 		for i := range jobs {
-			require.NoError(t, repo.Enqueue(ctx, queue.Job{
+			_, _, err := repo.Enqueue(ctx, queue.Job{
 				Topic:   topic,
 				Payload: queue.Payload(fmt.Sprintf(`{"n":%d}`, i+1)),
-			}), "постановка задания %d", i+1)
+			})
+			require.NoError(t, err, "постановка задания %d", i+1)
 		}
 
 		m := newFakeMetrics()
@@ -410,11 +414,12 @@ func TestMetricsGaugeDrainsToZero(t *testing.T) {
 		topic := e2eTopic(t, "metrics-zero-age")
 
 		// available_at в прошлом: возраст заведомо отличим от нуля.
-		require.NoError(t, repo.Enqueue(ctx, queue.Job{
+		_, _, err := repo.Enqueue(ctx, queue.Job{
 			Topic:       topic,
 			Payload:     queue.Payload(`{"waiting":true}`),
 			AvailableAt: time.Now().Add(-2 * time.Second),
-		}), "постановка ждущего задания")
+		})
+		require.NoError(t, err, "постановка ждущего задания")
 
 		m := newFakeMetrics()
 		stats := newStatsOnlyEngine(repo, m)
